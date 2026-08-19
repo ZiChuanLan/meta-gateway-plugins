@@ -1,0 +1,11 @@
+{
+  "id": "demo-plugin",
+  "version": "1.0.0",
+  "name": "Demo Plugin",
+  "description": "meta-gateway 托管进程插件参考实现：展示 plugin.json/healthz/页面/API 反代协议。",
+  "capabilities": ["admin_page"],
+  "page_path": "/",
+  "health_path": "healthz",
+  "entrypoint": "demo-plugin",
+  "run_args": ["-addr", "{addr}", "-key", "{key}"]
+}

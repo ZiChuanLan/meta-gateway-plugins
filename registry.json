@@ -15,8 +15,8 @@
             "goos": "linux",
             "goarch": "amd64",
             "url": "https://raw.githubusercontent.com/ZiChuanLan/meta-gateway-plugins/main/dist/demo-plugin_1.0.0_linux_amd64.zip",
-            "sha256": "3ab784aef33e46308569a8f21cb77697b673bfab60a419fe6ac112338e344499",
-            "size": 4815836
+                        "sha256": "01c0affe7998801f7696178843de6ee3af0111172dc3f6a6c0272c3d7f423ecb",
+            "size": 4816511
           }
         ]
       }
