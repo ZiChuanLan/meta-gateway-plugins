@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "plugins": [
+    {
+      "id": "demo-plugin",
+      "name": "Demo Plugin",
+      "description": "元网关托管进程插件参考实现：由 meta-gateway 下载安装包并在容器内拉起子进程，展示 plugin.json/healthz/页面/API 反代协议。",
+      "author": "meta-gateway",
+      "version": "1.0.0",
+      "tags": ["demo", "示例", "托管进程"],
+      "install": {
+        "type": "direct",
+        "artifacts": [
+          {
+            "goos": "linux",
+            "goarch": "amd64",
+            "url": "https://raw.githubusercontent.com/ZiChuanLan/meta-gateway-plugins/main/dist/demo-plugin_1.0.0_linux_amd64.zip",
+            "sha256": "3ab784aef33e46308569a8f21cb77697b673bfab60a419fe6ac112338e344499",
+            "size": 4815836
+          }
+        ]
+      }
+    }
+  ]
+}
