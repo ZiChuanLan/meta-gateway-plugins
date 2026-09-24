@@ -20,6 +20,22 @@
           }
         ]
       }
+    },
+    {
+      "id": "jev-router",
+      "name": "Jev 自动选路",
+      "description": "用 TypeSafe Jev（System One）为 auto-jev 的请求选模型：先判场景（code-simple / code-complex / thinking / bugfix / chat），再在该场景自己的候选里选；也支持平铺候选。候选集与网关实际可路由的模型取交集，绝不会选出一个没有渠道的模型。",
+      "author": "ZiChuanLan",
+      "repository": "ZiChuanLan/meta-gateway-plugins",
+      "version": "1.0.0",
+      "tags": ["routing", "typesafe", "jev", "托管进程"],
+      "install": {
+        "type": "github-release",
+        "artifacts": [
+          { "goos": "linux", "goarch": "amd64" },
+          { "goos": "linux", "goarch": "arm64" }
+        ]
+      }
     }
   ]
 }
