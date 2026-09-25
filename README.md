@@ -99,6 +99,8 @@ demo-plugin          # entrypoint 可执行程序
 
 ## 版本与 tag 约定（本仓只有一条发布流水线）
 
+发版 = **打 tag 推上去**：`.github/workflows/release.yml` 会在 tag 上先跑一遍 gofmt/vet/test 与注册表校验，再按注册表里 `github-release` 的插件逐个调用它们的 `build-release.ps1` 打包，把 zip 与合并后的 `checksums.txt` 作为 Release 资产上传。
+
 网关解析 Release 的规则是：**条目 `version` 为空 → `releases/latest`；有版本 → `releases/tags/v{version}`**（`internal/plugins/market_install.go`）。tag 名是仓库级的，所以：
 
 - **两个插件不能各占一个 `v1.0.0`。** 发行要么把该次要发的插件包放进**同一个** release，要么让它们的版本号互不相同（`v1.0.1`、`v1.0.2` 各自一个 release 也行）。

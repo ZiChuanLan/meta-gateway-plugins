@@ -63,7 +63,7 @@ const (
 	defaultSummaryRunes   = 2000
 	defaultDeclineMessage = "no candidate model is routable"
 	// pluginVersion is reported in the manifest and used as the release tag.
-	pluginVersion = "1.0.0"
+	pluginVersion = "1.0.1"
 	// recentDecisions bounds the in-memory decision log the page renders.
 	recentDecisions = 40
 )

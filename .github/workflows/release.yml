@@ -1,0 +1,99 @@
+name: Release
+
+# Publishing a plugin is: bump the version in plugins/<id>/main.go, push, tag.
+# The tag is repository-wide because the gateway resolves a `github-release`
+# install as `releases/tags/v{version}` (empty version → `releases/latest`), so
+# two plugins cannot both own v1.0.1 — ship them in one release, or give them
+# different versions. See the README.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      # A tag must not be able to publish packages from a broken commit. This
+      # mirrors ci.yml, which also runs on the tag push — but a release that
+      # waits on another workflow can be skipped by a red sibling, and re-running
+      # these checks costs seconds.
+      - name: Verify the tagged tree
+        run: |
+          set -euo pipefail
+          for dir in plugins/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            echo "::group::verify $dir"
+            unformatted="$(cd "$dir" && gofmt -l .)"
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt would rewrite files in $dir"
+              echo "$unformatted"
+              exit 1
+            fi
+            (cd "$dir" && go vet ./... && go test ./...)
+            echo "::endgroup::"
+          done
+          python3 scripts/validate_registry.py
+
+      # PowerShell is preinstalled on the GitHub-hosted Ubuntu images, but the
+      # images have been trimming it. The packaging scripts are the single source
+      # of truth for what a package contains, so install pwsh rather than
+      # reimplement packaging in bash.
+      - name: Ensure PowerShell is available
+        run: |
+          set -euo pipefail
+          if ! command -v pwsh >/dev/null 2>&1; then
+            curl -sSL -o /tmp/powershell.tar.gz \
+              https://github.com/PowerShell/PowerShell/releases/download/v7.4.6/powershell-7.4.6-linux-x64.tar.gz
+            sudo mkdir -p /opt/microsoft/powershell/7
+            sudo tar -xzf /tmp/powershell.tar.gz -C /opt/microsoft/powershell/7
+            sudo chmod +x /opt/microsoft/powershell/7/pwsh
+            sudo ln -sf /opt/microsoft/powershell/7/pwsh /usr/bin/pwsh
+          fi
+          pwsh -v
+
+      # Only plugins that install from a release are packaged here: a `direct`
+      # entry is published by committing its zip to dist/ instead (the demo
+      # plugin), and packaging that one would build a package nobody downloads.
+      - name: Build the packages this release publishes
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p /tmp/assets
+          python3 - > /tmp/release-plugins.txt <<'PY'
+          import json, pathlib
+          registry = json.loads(pathlib.Path("registry.json").read_text(encoding="utf-8"))
+          for entry in registry["plugins"]:
+              if str(entry.get("url", "")).strip() or entry.get("install"):
+                  continue
+              if str(entry.get("repository", "")).strip():
+                  print(entry["id"])
+          PY
+          test -s /tmp/release-plugins.txt || { echo "::error::registry.json lists no release-installed plugin"; exit 1; }
+          while read -r id; do
+            echo "::group::package $id $VERSION"
+            pwsh -File "plugins/$id/build-release.ps1" -Version "$VERSION"
+            cp "plugins/$id/dist/"*.zip /tmp/assets/
+            # The host looks a package up by file name inside one checksums.txt,
+            # so concatenating the per-plugin files keeps that contract when a
+            # release tag carries several plugins.
+            cat "plugins/$id/dist/checksums.txt" >> /tmp/assets/checksums.txt
+            echo "::endgroup::"
+          done < /tmp/release-plugins.txt
+          ls -l /tmp/assets
+
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: /tmp/assets/*
