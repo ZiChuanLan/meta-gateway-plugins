@@ -1,6 +1,6 @@
 # Jev 自动选路插件
 
-把客户端的 `model: "auto-jev"` 交给 TypeSafe 的 [System One](https://docs.typesafe.ai/concepts/system-one) 模型 **Jev**，由它在**网关当前真正能路由**的模型里选一个来回答。
+把客户端的 `model: "auto-jev"`（默认名，可在配置里改，见下方 `model_name`）交给 TypeSafe 的 [System One](https://docs.typesafe.ai/concepts/system-one) 模型 **Jev**，由它在**网关当前真正能路由**的模型里选一个来回答。
 
 两种路由形状：
 
@@ -51,6 +51,7 @@ curl $GATEWAY/v1/chat/completions -H "Authorization: Bearer $KEY" \
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `api_key` | — | TypeSafe API Key（`Authorization: Bearer`）。**必填**，缺失时插件拒绝本次钩子而不是猜一个模型。 |
+| `model_name` | `auto-jev` | **虚拟模型名**：客户端发送、网关发布、钩子接手的那个名字。插件在 `/models` 端点上报告当前值（manifest 的 `models_path`），网关在注册、保存配置、启用、启动与每 30 秒拉取——改完保存即生效，无需重新注册；旧名立即从 `/v1/models` 消失。页面与状态 API 从同一个配置读取，永远与网关发布的一致。 |
 | `base_url` | `https://api.typesafe.ai` | API 根地址，自建代理时改这里。 |
 | `model` | `jev-latest` | 用哪个 System One 模型做判断。 |
 | `scenarios` | 空 | **场景路由（推荐）**。JSON：`[{"name":"code","hint":"写代码","models":["a"]}]`；手写也支持行格式 `code (写代码): a`。见下节。 |

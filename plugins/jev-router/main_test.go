@@ -258,6 +258,7 @@ func TestManifestDeclaresHookAndPermission(t *testing.T) {
 			Route struct {
 				Path        string   `json:"path"`
 				MatchModels []string `json:"match_models"`
+				ModelsPath  string   `json:"models_path"`
 				TimeoutMs   int      `json:"timeout_ms"`
 			} `json:"route"`
 		} `json:"hooks"`
@@ -281,6 +282,45 @@ func TestManifestDeclaresHookAndPermission(t *testing.T) {
 	// would time out before the plugin has a chance to fall back.
 	if manifest.Hooks.Route.TimeoutMs <= defaultJevTimeoutMs {
 		t.Fatalf("hook timeout = %d, want more than the plugin's %dms Jev budget", manifest.Hooks.Route.TimeoutMs, defaultJevTimeoutMs)
+	}
+	// The operator names the model in the plugin's config; the manifest points
+	// the gateway at the discovery endpoint that reports the current answer.
+	if manifest.Hooks.Route.ModelsPath != "/models" {
+		t.Fatalf("models_path = %q, want /models", manifest.Hooks.Route.ModelsPath)
+	}
+}
+
+// The discovery endpoint answers from the injected config alone — no state —
+// so whatever the operator saved is what the gateway discovers and publishes.
+func TestModelsEndpointReportsConfiguredName(t *testing.T) {
+	srv := newTestServer()
+	if name := modelNameFrom(""); name != virtualModel {
+		t.Fatalf("modelNameFrom(\"\") = %q, want the default", name)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/models", nil)
+	req.Header.Set("X-Plugin-Config", configHeader(t, map[string]any{"model_name": "auto-house"}))
+	rec := httptest.NewRecorder()
+	srv.handleModels(rec, req)
+	var payload struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode models payload: %v", err)
+	}
+	if len(payload.Models) != 1 || payload.Models[0] != "auto-house" {
+		t.Fatalf("models = %v, want [auto-house]", payload.Models)
+	}
+	// Without config the declared default is what the gateway discovers.
+	rec2 := httptest.NewRecorder()
+	srv.handleModels(rec2, httptest.NewRequest(http.MethodGet, "/models", nil))
+	var fallback struct {
+		Models []string `json:"models"`
+	}
+	if err := json.Unmarshal(rec2.Body.Bytes(), &fallback); err != nil {
+		t.Fatalf("decode fallback payload: %v", err)
+	}
+	if len(fallback.Models) != 1 || fallback.Models[0] != virtualModel {
+		t.Fatalf("fallback models = %v, want [%s]", fallback.Models, virtualModel)
 	}
 }
 
@@ -327,6 +367,26 @@ func TestVirtualModelIsNamespaced(t *testing.T) {
 	// say which one it means.
 	if virtualModel != "auto-jev" {
 		t.Fatalf("virtualModel = %q, want the plugin-namespaced name", virtualModel)
+	}
+}
+
+// The page and the status API derive the name from the injected config on
+// every request — the same source the /models discovery endpoint reads — so
+// they always agree with what the gateway publishes.
+func TestStateReportsConfiguredName(t *testing.T) {
+	srv := newTestServer()
+	req := httptest.NewRequest(http.MethodGet, "/api/state", nil)
+	req.Header.Set("X-Plugin-Config", configHeader(t, map[string]any{"model_name": "auto-house"}))
+	rec := httptest.NewRecorder()
+	srv.handleState(rec, req)
+	var state struct {
+		Virtual string `json:"virtual"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &state); err != nil {
+		t.Fatalf("decode state: %v", err)
+	}
+	if state.Virtual != "auto-house" {
+		t.Fatalf("state.virtual = %q, want the configured name", state.Virtual)
 	}
 }
 

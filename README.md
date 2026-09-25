@@ -15,7 +15,7 @@ meta-gateway 控制台的「拓展 → 插件市场」默认从这里读 `regist
 │   │   ├── plugin.json            # 打包进 zip 的 manifest（entrypoint + run_args）
 │   │   └── build-release.ps1      # 构建 → dist/，并打印 registry.json 需要的那段 JSON
 │   └── jev-router/
-│       ├── main.go                # TypeSafe Jev 自动选路（虚拟模型 auto-jev）
+│       ├── main.go                # TypeSafe Jev 自动选路（虚拟模型名可在配置里改，默认 auto-jev）
 │       ├── main_test.go
 │       ├── build-release.ps1      # 交叉编译 + 打包（manifest 由二进制 -dump-manifest 输出）
 │       └── README.md              # 配置项、场景路由、降级语义
@@ -96,6 +96,12 @@ demo-plugin          # entrypoint 可执行程序
 - `entrypoint`：zip 内的可执行文件名。**必须写目标平台的真实文件名** —— Windows 带 `.exe`（`jev-router.exe`），Linux/macOS 不带。网关解压后会拿它去对文件做检查（`validatePluginManifestForPackage`），写错就是 `plugin_manifest_entrypoint_missing`：Linux 上装得好好的，Windows 上直接失败。所以两个 `build-release.ps1` 都按目标平台改写这份清单，而不是照搬一份固定值。
 - `run_args`：启动参数，占位符 `{addr}`/`{port}`/`{id}`/`{plugin_dir}`/`{key}` 由 meta-gateway 启动时替换。`{addr}` 是网关分配的 `127.0.0.1:<随机端口>`。
 - 钩子插件另需 `permissions: ["relay:intercept"]` 与 `hooks`（见 `plugins/jev-router`）。
+- 钩子声明里可选 `models_path`：指向插件侧一个 GET 端点，返回 `{"models":[…]}`（也接受
+  `{"data":[{"id":…}]}`）。网关在注册、启用、保存配置、启动与每 30 秒拉取该名单，用它替代
+  `match_models` 作为钩子匹配与 `/v1/models` 发布的依据（拉取失败时回退到清单声明列表）。
+  模型名跟着插件自己的配置走的插件用它——网关不需要、也不应该知道任何具体插件的配置键
+  （jev-router 的 `model_name` 就是这样接的）。声明了 `models_path` 的钩子其 `match_models`
+  变为可选。
 
 ## 版本与 tag 约定（本仓只有一条发布流水线）
 

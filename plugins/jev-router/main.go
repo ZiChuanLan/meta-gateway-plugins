@@ -63,7 +63,7 @@ const (
 	defaultSummaryRunes   = 2000
 	defaultDeclineMessage = "no candidate model is routable"
 	// pluginVersion is reported in the manifest and used as the release tag.
-	pluginVersion = "1.0.1"
+	pluginVersion = "1.1.0"
 	// recentDecisions bounds the in-memory decision log the page renders.
 	recentDecisions = 40
 )
@@ -74,6 +74,11 @@ type config struct {
 	APIKey  string `json:"api_key"`
 	BaseURL string `json:"base_url"`
 	Model   string `json:"model"`
+	// ModelName is the virtual model name clients send — the operator's choice,
+	// not a constant. The manifest's route hook declares match_models_config_key
+	// pointing at this field, so the gateway publishes whatever is saved here
+	// (the declared "auto-jev" stays the fallback while it is empty).
+	ModelName string `json:"model_name"`
 	// Candidates maps a model name to what it is good at: "gpt-5: math and
 	// long reasoning". The description is what Jev's choice criteria carries,
 	// so it decides with the operator's own words. Used when no scenarios are
@@ -107,6 +112,9 @@ type config struct {
 }
 
 func (c config) withDefaults() config {
+	if strings.TrimSpace(c.ModelName) == "" {
+		c.ModelName = virtualModel
+	}
 	if strings.TrimSpace(c.BaseURL) == "" {
 		c.BaseURL = defaultBaseURL
 	}
@@ -429,6 +437,7 @@ func main() {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/plugin.json", srv.handleManifest)
+	mux.HandleFunc("/models", srv.auth(srv.handleModels, requireKey))
 	mux.HandleFunc("/healthz", srv.auth(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprint(w, "ok")
@@ -479,6 +488,8 @@ func manifestJSON() map[string]any {
 		"config_fields": []map[string]any{
 			{"key": "api_key", "type": "secret", "label": "TypeSafe API Key", "required": true,
 				"description": "api.typesafe.ai 的密钥，只保存在网关侧并以请求头下发给插件。"},
+			{"key": "model_name", "type": "string", "label": "模型名称", "default": virtualModel,
+				"description": "客户端调用的虚拟模型名（网关按它发布模型、钩子按它接手）。默认 " + virtualModel + "；改完保存即生效，无需重启。"},
 			{"key": "scenarios", "type": "model_groups", "label": "场景路由（推荐）",
 				"description": "先用一次判断选场景，再在该场景的模型里选；场景只剩一个可路由模型时省掉第二次判断。模型列表来自本网关实际可路由的模型。",
 				// Empty on purpose: a manifest cannot know this gateway's models, so
@@ -506,8 +517,13 @@ func manifestJSON() map[string]any {
 		},
 		"hooks": map[string]any{
 			"route": map[string]any{
-				"path":         "/hooks/route",
+				"path": "/hooks/route",
+				// The model name follows the operator's config; the plugin reports
+				// the current answer on /models (models_path), so the gateway
+				// discovers it and no name is frozen in the manifest. The declared
+				// match_models only stands in while /models is unreachable.
 				"match_models": []string{virtualModel},
+				"models_path":  "/models",
 				"timeout_ms":   2000,
 				"priority":     10,
 			},
@@ -517,6 +533,16 @@ func manifestJSON() map[string]any {
 
 func (s *server) handleManifest(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, manifestJSON())
+}
+
+// handleModels reports the model names this plugin currently answers for —
+// the gateway's discovery endpoint (manifest hooks.route.models_path). The
+// answer is computed from the X-Plugin-Config the gateway sends on every call,
+// so the plugin holds no state: whatever name the operator saved is what the
+// gateway discovers here and publishes on /v1/models.
+func (s *server) handleModels(w http.ResponseWriter, r *http.Request) {
+	cfg := decodeConfig(r.Header.Get("X-Plugin-Config")).withDefaults()
+	writeJSON(w, map[string]any{"models": []string{cfg.ModelName}})
 }
 
 // routeDecision is what one routing pass concluded.
@@ -937,14 +963,14 @@ func (s *server) record(base decision, fallback, reason string, started time.Tim
 	}
 }
 
-func (s *server) handleState(w http.ResponseWriter, _ *http.Request) {
+func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	decisionsCopy := append([]decision(nil), s.decisions...)
 	calls, fallbacks, failures := s.calls, s.fallbacks, s.failures
 	s.mu.Unlock()
 	writeJSON(w, map[string]any{
 		"plugin":    pluginID,
-		"virtual":   virtualModel,
+		"virtual":   modelNameFrom(r.Header.Get("X-Plugin-Config")),
 		"calls":     calls,
 		"fallbacks": fallbacks,
 		"failures":  failures,
@@ -952,7 +978,20 @@ func (s *server) handleState(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-func (s *server) handlePage(w http.ResponseWriter, _ *http.Request) {
+// modelNameFrom is the virtual name reported everywhere the operator can see
+// it: the configured one when the gateway's injected config carries one, the
+// built-in default otherwise. The gateway discovers the same answer through
+// /models, so the page, the status API and /v1/models always agree.
+func modelNameFrom(configHeader string) string {
+	name := strings.TrimSpace(decodeConfig(configHeader).ModelName)
+	if name == "" {
+		return virtualModel
+	}
+	return name
+}
+
+func (s *server) handlePage(w http.ResponseWriter, r *http.Request) {
+	model := modelNameFrom(r.Header.Get("X-Plugin-Config"))
 	s.mu.Lock()
 	decisionsCopy := append([]decision(nil), s.decisions...)
 	calls, fallbacks, failures := s.calls, s.fallbacks, s.failures
@@ -1025,7 +1064,7 @@ func (s *server) handlePage(w http.ResponseWriter, _ *http.Request) {
 </table>
 <script>setTimeout(function(){ location.reload(); }, 5000);</script>
 </body>
-</html>`, virtualModel, calls, fallbacks, failures, rows.String())
+</html>`, model, calls, fallbacks, failures, rows.String())
 }
 
 func shorten(value string, limit int) string {
