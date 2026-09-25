@@ -73,8 +73,12 @@ foreach ($target in $Targets) {
 	}
 
 	# The zip must carry plugin.json next to the entrypoint at its root: that is
-	# what the host reads before it launches anything.
-	Copy-Item -Force $manifestPath (Join-Path $stage "plugin.json")
+	# what the host reads before it launches anything. The packaged entrypoint has
+	# to name the file this target actually ships — Windows keeps an ".exe"
+	# suffix, and the host validates the entrypoint against the extracted files.
+	$packaged = $manifest
+	$packaged.entrypoint = $binaryName
+	$packaged | ConvertTo-Json -Depth 12 | Set-Content -Path (Join-Path $stage "plugin.json") -Encoding utf8NoBOM
 	$zipName = "${id}_${Version}_${goos}_${goarch}.zip"
 	$zipPath = Join-Path $dist $zipName
 	Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipPath -Force

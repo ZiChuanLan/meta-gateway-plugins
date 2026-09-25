@@ -51,10 +51,10 @@ if ($LASTEXITCODE -ne 0) { throw "host build failed" }
 
 # The manifest comes from the plugin, not from this script: one definition, and
 # the packaged copy is guaranteed to be the one the service serves.
-$manifest = & $hostBinary -dump-manifest
+$manifestJSON = & $hostBinary -dump-manifest
 if ($LASTEXITCODE -ne 0) { throw "manifest dump failed" }
-Set-Content -Path (Join-Path $stage "plugin.json") -Value $manifest -Encoding utf8NoBOM
 Remove-Item -Force $hostBinary
+$manifest = $manifestJSON | ConvertFrom-Json
 
 $checksumLines = @()
 foreach ($target in $Targets) {
@@ -84,6 +84,16 @@ foreach ($target in $Targets) {
 
 	$zipName = "${id}_${Version}_${goos}_${goarch}.zip"
 	$zipPath = Join-Path $dist $zipName
+
+	# The host validates the manifest's entrypoint against the files in the
+	# package (plugins.validatePluginManifestForPackage), so the packaged copy has
+	# to name the file this target actually ships. Windows keeps an ".exe" suffix
+	# — a bare "jev-router" fails there with plugin_manifest_entrypoint_missing
+	# while installing fine on Linux, which is how this stayed invisible in
+	# production for so long.
+	$manifest.entrypoint = $binaryName
+	$manifest | ConvertTo-Json -Depth 12 | Set-Content -Path (Join-Path $stage "plugin.json") -Encoding utf8NoBOM
+
 	Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zipPath -Force
 	Remove-Item -Force $output
 

@@ -93,7 +93,7 @@ demo-plugin          # entrypoint 可执行程序
 }
 ```
 
-- `entrypoint`：zip 内的可执行文件名。
+- `entrypoint`：zip 内的可执行文件名。**必须写目标平台的真实文件名** —— Windows 带 `.exe`（`jev-router.exe`），Linux/macOS 不带。网关解压后会拿它去对文件做检查（`validatePluginManifestForPackage`），写错就是 `plugin_manifest_entrypoint_missing`：Linux 上装得好好的，Windows 上直接失败。所以两个 `build-release.ps1` 都按目标平台改写这份清单，而不是照搬一份固定值。
 - `run_args`：启动参数，占位符 `{addr}`/`{port}`/`{id}`/`{plugin_dir}`/`{key}` 由 meta-gateway 启动时替换。`{addr}` 是网关分配的 `127.0.0.1:<随机端口>`。
 - 钩子插件另需 `permissions: ["relay:intercept"]` 与 `hooks`（见 `plugins/jev-router`）。
 
