@@ -1,0 +1,7 @@
+# Per-plugin build output. A released package is published twice at most:
+# as a GitHub Release asset (github-release installs) or as a committed file in
+# dist/ (direct installs). Never both, and never a local build directory.
+plugins/*/dist/
+plugins/*/.build/
+*.exe
+*.exe~

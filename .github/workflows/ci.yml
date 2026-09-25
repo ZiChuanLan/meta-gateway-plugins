@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  plugins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same Go minor as the gateway. These plugins speak the sidecar
+      # protocol meta-gateway defines, so matching toolchains keep gofmt and
+      # go vet agreeing with the other repository instead of drifting one
+      # release behind it.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      # Each plugin is its own module (plugins/<id>/go.mod): a plugin that fails
+      # to compile must not be able to hide behind the others, and a broken one
+      # has to fail its own step rather than stop the loop early.
+      - name: Check formatting
+        run: |
+          set -euo pipefail
+          fail=0
+          for dir in plugins/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            unformatted="$(cd "$dir" && gofmt -l .)"
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt would rewrite files in $dir"
+              echo "$unformatted"
+              fail=1
+            fi
+          done
+          exit $fail
+
+      - name: Vet
+        run: |
+          set -euo pipefail
+          for dir in plugins/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            echo "::group::go vet $dir"
+            (cd "$dir" && go vet ./...)
+            echo "::endgroup::"
+          done
+
+      # The plugin's own tests are the only place the judgment layer is exercised:
+      # what gets sent to Jev, and what a slow or wrong answer degrades to.
+      - name: Test
+        run: |
+          set -euo pipefail
+          for dir in plugins/*/; do
+            [ -f "${dir}go.mod" ] || continue
+            echo "::group::go test $dir"
+            (cd "$dir" && go test ./...)
+            echo "::endgroup::"
+          done
+
+      # Registry entries pin sha256 + size; the gateway only ever verifies the
+      # one platform it is installing on, so the rest are checked here.
+      - name: Validate registry.json
+        run: python3 scripts/validate_registry.py
