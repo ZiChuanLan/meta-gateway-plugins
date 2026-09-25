@@ -28,7 +28,7 @@
       "author": "ZiChuanLan",
       "homepage": "https://github.com/ZiChuanLan/meta-gateway-plugins",
       "repository": "https://github.com/ZiChuanLan/meta-gateway-plugins",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "tags": ["routing", "typesafe", "jev", "托管进程"]
     }
   ]
