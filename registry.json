@@ -47,13 +47,17 @@
       "author": "ZiChuanLan",
       "homepage": "https://github.com/ZiChuanLan/meta-gateway-plugins",
       "repository": "https://github.com/ZiChuanLan/meta-gateway-plugins",
-      "version": "0.2.3",
+      "version": "0.3.0",
       "tags": [
         "订阅",
         "opencode",
         "2api",
         "托管进程"
-      ]
+      ],
+      "install": {
+        "type": "github-release",
+        "artifact_pattern": "{id}_{version}.zip"
+      }
     }
   ]
 }

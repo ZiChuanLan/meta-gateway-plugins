@@ -560,7 +560,7 @@ function readBody(req, limit = 32 << 20) {
 
 const MANIFEST = {
   id: "opencode-host",
-  version: "0.2.3",
+  version: "0.3.0",
   name: "订阅账号宿主",
   description: "在网关里直接运行其他作者的 OpenCode 订阅插件（npm 包）：装包、登录，即可把订阅当上游渠道使用。",
   page_path: "/",

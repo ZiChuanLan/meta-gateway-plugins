@@ -29,21 +29,23 @@
 
 ## 跑起来
 
-**推荐：从插件市场装（一键，不需要 Node）。**
+**推荐：从插件市场装。**
 
-控制台 **拓展 → 插件市场 → OpenCode Provider Host → 安装**。网关会自己下载对应平台的安装包（单个自带运行时的可执行文件）、校验 sha256、解包、拉起进程并等 `/healthz`；装完点插件卡片就是它自己的管理页。
+控制台 **拓展 → 插件市场 → 订阅账号宿主 → 安装**。网关下载那个包（15 KB，一个文件、不分平台）、校验 sha256、解包，然后用**它自己的 Node** 拉起 `node src/host.mjs` 并等 `/healthz`；装完点插件卡片就是它自己的管理页。
 
-一台能跑托管包的机器只需要三样东西：
+包本身只有程序，没有运行时：`plugin.json` 的 `entrypoint` 是裸名 `node`，由网关提供解释器（`internal/plugins/process.go` 的 `pluginEntrypoint`：包里有同名文件就用包里的，没有且是裸名就去 PATH 上找）。所以同样一个 zip 在 amd64、arm64、macOS、Windows 上都是同一个。
+
+一台能跑它的机器需要：
 
 | 依赖 | 为什么 |
 | :--- | :--- |
+| `node` | 宿主本体（官方网关镜像自带；裸机跑二进制的话自己装，Alpine 3.22 给的是 22.x，实测可用） |
 | `tar` | 安装 npm 包时解 `.tgz`（busybox 的够用；Windows 自带 `tar.exe` 也行） |
 | CA 证书 | 访问 `registry.npmjs.org` 要用 HTTPS |
-| `libstdc++`（仅 musl/Alpine） | Linux 产物是 Bun 的 musl 构建；官方 Alpine 镜像需要这一个包 |
 
-> **不需要 node，也不需要 npm。** 装 npm 包走的不是 npm，而是「读 registry 元数据 → 下载 tarball → `tar` 解开」——这些包按仓库约定不带依赖，所以没有要解析的依赖树；真带了依赖的包会被明确拒绝并提示用 npm 装。
+> **不需要 npm。** 装 npm 包走的不是 npm，而是「读 registry 元数据 → 下载 tarball → `tar` 解开」——这些包按仓库约定不带依赖，所以没有要解析的依赖树；真带了依赖的包会被明确拒绝并提示用 npm 装。
 
-开发时也可以直接跑源码（需要 Node 24+）：
+开发时直接跑源码：
 
 ```bash
 node src/host.mjs          # DATA_DIR 由 META_GATEWAY_PLUGIN_DIR 指定，端口由 META_GATEWAY_PLUGIN_PORT 指定
@@ -62,10 +64,10 @@ META_GATEWAY_PLUGIN_DIR=$PWD/data META_GATEWAY_PLUGIN_PORT=9300 META_GATEWAY_PLU
 ## 发版
 
 ```powershell
-./build-release.ps1 -Version 0.2.0     # 四个平台的 zip 落在仓库 dist/，并打印 registry.json 条目
+./build-release.ps1 -Version 0.3.0     # 一个 zip（约 15 KB）落到 plugins/opencode-host/dist/，连同 checksums.txt
 ```
 
-产物是 Bun 编译的单文件（45 MB 左右），运行时不依赖 Node。`plugin.json` 里 `entrypoint` 会按平台改成带不带 `.exe`——装错一次就会得到 `plugin_manifest_entrypoint_missing`。
+包里是 `plugin.json` + `package.json` + `src/host.mjs` + `public/index.html`，**不分平台**。registry 条目用 `install.artifact_pattern: "{id}_{version}.zip"` 告诉安装器名字里没有 goos/goarch；资产挂到 `v{version}` 这个 Release，`dist/` 不进 git。
 
 ## 用
 
