@@ -24,14 +24,6 @@ jobs:
           go-version: "1.26.x"
           cache: true
 
-      # build-release.ps1 cross-compiles with Bun (one self-contained file per
-      # platform). On Linux it uses the local Bun; a Windows checkout goes through
-      # Docker instead, because a Windows Bun cannot fetch the Linux runtimes it
-      # compiles against.
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
-
       # A tag must not be able to publish packages from a broken commit. This
       # mirrors ci.yml, which also runs on the tag push — but a release that
       # waits on another workflow can be skipped by a red sibling, and re-running
