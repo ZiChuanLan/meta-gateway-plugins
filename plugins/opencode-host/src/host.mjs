@@ -21,6 +21,7 @@
 
 import { execFile } from "node:child_process"
 import fs from "node:fs"
+import { timingSafeEqual } from "node:crypto"
 import { createServer } from "node:http"
 import path from "node:path"
 import { Readable } from "node:stream"
@@ -128,6 +129,18 @@ function pickPluginFn(mod) {
 
 let reloading = null
 
+// A package that never settles would hold up the whole reload — and the reload
+// gates startup, so one broken package would keep the host from ever listening.
+const LOAD_TIMEOUT_MS = Number(process.env.HOST_LOAD_TIMEOUT_MS || 15_000)
+
+function withTimeout(promise, what) {
+  let timer
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what} took longer than ${LOAD_TIMEOUT_MS}ms`)), LOAD_TIMEOUT_MS)
+  })
+  return Promise.race([promise, expired]).finally(() => clearTimeout(timer))
+}
+
 // reload imports every enabled package and calls its plugin function. One
 // package that fails is reported and skipped: the rest of the host still
 // serves, which is what keeps a bad install from taking the gateway's channel
@@ -140,10 +153,13 @@ async function reload() {
     for (const entry of state.packages) {
       if (entry.enabled === false) continue
       try {
-        const mod = await import(`${pathToFileURL(path.join(entry.dir, entry.main)).href}?v=${Date.now()}`)
+        const mod = await withTimeout(
+          import(`${pathToFileURL(path.join(entry.dir, entry.main)).href}?v=${Date.now()}`),
+          `importing ${entry.spec}`,
+        )
         const plugin = pickPluginFn(mod)
         if (!plugin) throw new Error("the package exports no plugin function")
-        const hooks = await plugin(pluginInput())
+        const hooks = await withTimeout(plugin(pluginInput()), `${entry.spec}'s plugin function`)
         if (!hooks || typeof hooks !== "object") throw new Error("the plugin returned no hooks")
         const id = hooks.auth?.provider || hooks.provider?.id
         if (!id) throw new Error("the plugin names no provider")
@@ -200,6 +216,10 @@ const SAFE_SPEC = /^[@\w.\\/:~+-]+$/
 // registry. Anything else (a path, a git URL, a tarball) needs npm.
 const REGISTRY_SPEC = /^(@[a-z0-9][\w.-]*\/)?[a-z0-9][\w.-]*(@[\w.^~-]+)?$/i
 
+// A plugin tarball is a few hundred KB; the cap keeps a hostile or broken
+// registry entry from filling the gateway's disk through this process.
+const TARBALL_MAX_BYTES = 32 << 20
+
 // installFromRegistry is the whole of what installing a provider package needs.
 // Those packages have no dependencies of their own (checked, and stated as the
 // convention in the plugins repository), so this is: read the registry entry,
@@ -221,12 +241,35 @@ async function installFromRegistry(spec) {
     throw new Error(`${name}@${version} declares dependencies (${Object.keys(release.dependencies).join(", ")}); install it with npm instead`)
   }
 
+  const tarballURL = String(release.dist.tarball)
+  // The metadata says where to download from, so pin it: nothing but the public
+  // registry may be reached, and nothing bigger than a plugin tarball is read.
+  const url = new URL(tarballURL)
+  if (url.protocol !== "https:" || url.hostname !== "registry.npmjs.org") {
+    throw new Error(`refusing tarball from ${url.origin}: only https://registry.npmjs.org is trusted`)
+  }
+
   const tmp = fs.mkdtempSync(path.join(DIR, ".install-"))
   try {
     const tarball = path.join(tmp, "package.tgz")
-    const response = await fetch(release.dist.tarball, { signal: AbortSignal.timeout(120_000) })
-    if (!response.ok) throw new Error(`downloading ${release.dist.tarball} answered HTTP ${response.status}`)
-    fs.writeFileSync(tarball, Buffer.from(await response.arrayBuffer()))
+    const response = await fetch(tarballURL, { signal: AbortSignal.timeout(120_000) })
+    if (!response.ok) throw new Error(`downloading ${tarballURL} answered HTTP ${response.status}`)
+    const payloadBytes = Buffer.from(await response.arrayBuffer())
+    if (payloadBytes.length > TARBALL_MAX_BYTES) {
+      throw new Error(`tarball is ${payloadBytes.length} bytes, more than the ${TARBALL_MAX_BYTES} byte limit`)
+    }
+    fs.writeFileSync(tarball, payloadBytes)
+    // The member list is checked before anything is written: a tarball whose
+    // entries are absolute, climb out of the directory, or are links would
+    // otherwise place files wherever it liked.
+    for (const line of (await run("tar", ["-tvzf", tarball])).split("\n")) {
+      const trimmed = line.trim()
+      const member = trimmed.split(/\s+/).slice(5).join(" ")
+      if (!member) continue
+      if (/^[lh]/.test(trimmed) || member.startsWith("/") || member.split("/").includes("..")) {
+        throw new Error(`${name}@${version} refuses: tarball member ${JSON.stringify(member)} is a link or escapes the package`)
+      }
+    }
     // System tar unpacks the payload; its `package/` prefix is stripped by
     // moving that one directory into place, which busybox tar can do too.
     await run("tar", ["-xzf", tarball, "-C", tmp])
@@ -573,10 +616,23 @@ function authorized(req, url) {
   if (!PLUGIN_KEY) return true
   // Three callers, three shapes: the gateway's plugin proxy sends X-Plugin-Key,
   // an embedded page sends ?t=, and a channel (base_url = {url}/v1) sends the
-  // key as a bearer token like any other OpenAI-compatible upstream.
-  if (req.headers["x-plugin-key"] === PLUGIN_KEY) return true
-  if (req.headers.authorization === `Bearer ${PLUGIN_KEY}`) return true
-  return url.searchParams.get("t") === PLUGIN_KEY
+  // key as a bearer token like any other OpenAI-compatible upstream — which is
+  // why /v1 is gated too: an unauthenticated /v1 turns this host into an open
+  // relay onto the operator's paid subscription.
+  const presented = req.headers["x-plugin-key"] ?? bearer(req) ?? url.searchParams.get("t")
+  return typeof presented === "string" && safeEqual(presented, PLUGIN_KEY)
+}
+
+function bearer(req) {
+  const header = req.headers.authorization || ""
+  return header.startsWith("Bearer ") ? header.slice("Bearer ".length) : ""
+}
+
+// safeEqual compares without leaking the shared prefix's length through timing.
+function safeEqual(left, right) {
+  const a = Buffer.from(String(left))
+  const b = Buffer.from(String(right))
+  return a.length === b.length && timingSafeEqual(a, b)
 }
 
 function copyHeaders(from) {
@@ -663,6 +719,7 @@ async function handle(req, res) {
 
   const providerID = url.searchParams.get("provider") || ""
   if (pathname.startsWith("/v1/")) {
+    if (!authorized(req, url)) return sendJSON(res, 401, { error: { message: "missing plugin key" } })
     const sub = pathname.slice("/v1/".length)
     if (method === "GET" && sub === "models") {
       const data = []
@@ -751,6 +808,17 @@ const server = createServer((req, res) => {
 })
 
 const errors = await reload()
+
+// The key is the only thing standing between the network and /v1 + /api, so a
+// non-loopback bind without one is refused instead of served openly — an
+// unauthenticated /v1 would let anyone spend the operator's subscription and
+// install packages into this directory.
+if (!PLUGIN_KEY && !["127.0.0.1", "::1", "localhost"].includes(BIND)) {
+  console.error(`[host] refusing to listen on ${BIND} without META_GATEWAY_PLUGIN_KEY`)
+  process.exit(1)
+}
+if (!PLUGIN_KEY) console.error("[host] META_GATEWAY_PLUGIN_KEY is not set: loopback only, no authentication")
+
 console.error(`[host] listening on ${BIND}:${PORT} with ${loaded.size} provider(s); data ${DIR}`)
 if (errors.length) console.error(`[host] packages that failed to load: ${errors.map((e) => `${e.spec} (${e.error})`).join(", ")}`)
 

@@ -62,24 +62,31 @@ jobs:
           fi
           pwsh -v
 
-      # Only plugins that install from a release are packaged here: a `direct`
-      # entry is published by committing its zip to dist/ instead (the demo
-      # plugin), and packaging that one would build a package nobody downloads.
+      # Only the plugins this tag actually publishes are packaged: a tag carries
+      # one version for the whole repository, so a plugin sitting at a different
+      # version (already released under its own tag) is skipped rather than
+      # rebuilt as a downgrade artifact. `direct` entries publish by committing
+      # their zip to dist/ instead (the demo plugin).
       - name: Build the packages this release publishes
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          export VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p /tmp/assets
           python3 - > /tmp/release-plugins.txt <<'PY'
-          import json, pathlib
+          import json, os, pathlib, sys
+          version = os.environ["VERSION"]
           registry = json.loads(pathlib.Path("registry.json").read_text(encoding="utf-8"))
           for entry in registry["plugins"]:
-              if str(entry.get("url", "")).strip() or entry.get("install"):
+              if str(entry.get("url", "")).strip() or entry.get("install", {}).get("type") == "direct":
                   continue
-              if str(entry.get("repository", "")).strip():
-                  print(entry["id"])
+              if not str(entry.get("repository", "")).strip():
+                  continue
+              if entry.get("version") != version:
+                  print(f"skip {entry['id']} {entry.get('version')} != {version}", file=sys.stderr)
+                  continue
+              print(entry["id"])
           PY
-          test -s /tmp/release-plugins.txt || { echo "::error::registry.json lists no release-installed plugin"; exit 1; }
+          test -s /tmp/release-plugins.txt || { echo "::error::no plugin in registry.json is at version $VERSION"; exit 1; }
           while read -r id; do
             echo "::group::package $id $VERSION"
             pwsh -File "plugins/$id/build-release.ps1" -Version "$VERSION"

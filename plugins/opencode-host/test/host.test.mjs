@@ -15,7 +15,11 @@ const HOST_ENTRY = path.join(ROOT, "src", "host.mjs")
 // `fetch` the loader returned. Writing it here rather than installing one from
 // npm keeps the test offline while running the same code path.
 const FIXTURE_PLUGIN = `
-export const FixturePlugin = async (input) => ({
+export const FixturePlugin = async (input) => {
+  // FIXTURE_HANG makes the plugin function never settle, so the test can prove a
+  // hung package is skipped instead of blocking startup.
+  if (process.env.FIXTURE_HANG === "1") return new Promise(() => {})
+  return {
   auth: {
     provider: "fixture",
     methods: [
@@ -46,7 +50,8 @@ export const FixturePlugin = async (input) => ({
       return { "fixture-large": { name: "Fixture Large", limit: { context: 1000, output: 100 } } }
     },
   },
-})
+  }
+}
 `
 
 // startUpstream answers whatever the host sends it and keeps the last request
@@ -321,4 +326,88 @@ test("answers a sandboxed page: CORS on responses and on preflight", async (t) =
   assert.equal(preflight.status, 204)
   assert.equal(preflight.headers.get("access-control-allow-origin"), "*")
   assert.match(preflight.headers.get("access-control-allow-methods") || "", /POST/)
+})
+
+// /v1 is the endpoint the gateway's relay calls, and it is the one that spends
+// the operator's subscription: leaving it open would make this host an open
+// relay onto a paid account for anyone who can reach the port.
+test("the relay endpoint needs the plugin key too", async (t) => {
+  const state = { requests: [] }
+  const upstream = await startUpstream(state)
+  t.after(() => upstream.close())
+  const host = await startHost({
+    META_GATEWAY_PLUGIN_KEY: "sekrit",
+    FIXTURE_BASE: `http://127.0.0.1:${upstream.address().port}/v1`,
+  })
+  t.after(() => host.child.kill())
+
+  const body = JSON.stringify({ model: "fixture-large", messages: [{ role: "user", content: "hi" }] })
+  const anonymous = await call(host.base, "/v1/chat/completions", { method: "POST", body })
+  assert.equal(anonymous.status, 401)
+
+  const wrong = await call(host.base, "/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: "Bearer not-the-key" },
+    body,
+  })
+  assert.equal(wrong.status, 401)
+
+  // The key is also what the admin API takes, here to sign the package in.
+  const signed = await call(host.base, "/api/signin/api", {
+    method: "POST",
+    headers: { "x-plugin-key": "sekrit" },
+    body: JSON.stringify({ provider: "fixture" }),
+  })
+  assert.equal(signed.status, 200, signed.text)
+
+  const allowed = await call(host.base, "/v1/chat/completions", {
+    method: "POST",
+    headers: { authorization: "Bearer sekrit" },
+    body,
+  })
+  assert.equal(allowed.status, 200, allowed.text)
+  assert.equal(state.requests.length, 1)
+})
+
+// Without a key there is no authentication at all, so a non-loopback bind is
+// refused rather than published: the standalone image is the case that would
+// otherwise expose /v1 and /api to the host's network.
+test("refuses to listen off loopback without a key", async () => {
+  const port = await freePort()
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-host-open-"))
+  const child = spawn(process.execPath, [HOST_ENTRY], {
+    env: {
+      ...process.env,
+      META_GATEWAY_PLUGIN_DIR: dir,
+      META_GATEWAY_PLUGIN_ADDR: "0.0.0.0",
+      META_GATEWAY_PLUGIN_PORT: String(port),
+      META_GATEWAY_PLUGIN_KEY: "",
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  let log = ""
+  child.stderr.on("data", (chunk) => {
+    log += chunk.toString("utf8")
+  })
+  const code = await new Promise((resolve) => child.on("exit", resolve))
+  assert.equal(code, 1, `expected a refusal, got exit ${code}: ${log}`)
+  assert.match(log, /refusing to listen on 0\.0\.0\.0/)
+})
+
+// A package that never settles must not keep the host from listening: the
+// gateway would report plugin_health_check_failed and the channel would be dead
+// for a package that is only slow or hung.
+test("a package that never settles is skipped, not fatal", async (t) => {
+  const host = await startHost({
+    HOST_LOAD_TIMEOUT_MS: "300",
+    FIXTURE_HANG: "1",
+  })
+  t.after(() => host.child.kill())
+
+  const health = await call(host.base, "/healthz")
+  assert.equal(health.status, 200)
+  assert.equal(health.body.providers, 0)
+  const state = await call(host.base, "/api/state")
+  assert.equal(state.status, 200)
+  assert.deepEqual(state.body.providers, [])
 })

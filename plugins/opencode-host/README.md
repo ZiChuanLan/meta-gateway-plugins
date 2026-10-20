@@ -54,8 +54,10 @@ node src/host.mjs          # DATA_DIR 由 META_GATEWAY_PLUGIN_DIR 指定，端�
 托管运行时网关会注入 `META_GATEWAY_PLUGIN_{ID,DIR,ADDR,PORT,KEY}`；手动起的话自己设这几个环境变量：
 
 ```bash
-META_GATEWAY_PLUGIN_DIR=$PWD/data META_GATEWAY_PLUGIN_PORT=9300 META_GATEWAY_PLUGIN_ADDR=127.0.0.1 node src/host.mjs
+META_GATEWAY_PLUGIN_DIR=$PWD/data META_GATEWAY_PLUGIN_PORT=9300 META_GATEWAY_PLUGIN_ADDR=127.0.0.1 META_GATEWAY_PLUGIN_KEY=pick-a-long-one node src/host.mjs
 ```
+
+> **`META_GATEWAY_PLUGIN_KEY` 必须设**，否则只能绑回环：绑到 `0.0.0.0` 而不带密钥会被拒绝启动（`refusing to listen on 0.0.0.0 without META_GATEWAY_PLUGIN_KEY`）。密钥同时守住 `/v1` —— 没有它，任何能连到这个端口的人都能花你的订阅额度、往插件目录里装包。
 
 然后 **拓展 → 注册 sidecar** 填 `http://127.0.0.1:9300`，再去「创建渠道」（地址与密钥会自动填成 `http://127.0.0.1:9300/v1`）。
 
@@ -106,7 +108,11 @@ export const MyPlugin = async (input) => ({
 - **一个 provider 一个账号。** 同一家多账号还没做，需要时再加（`provider#2` 的形状）。
 - **OAuth 的自动续期没有单独实现**：刷新逻辑在包自己的 `loader`/`fetch` 里，宿主每次请求都会重新调 `loader`。包不刷新就得重新登录。
 - **`$`（Bun shell）不可用**：需要跑命令的包（少数要调厂商 CLI 的）会拿到一个抛错函数。
-- **信任模型**：宿主在进程内跑第三方 JS。和所有 sidecar 一样，只装你信任的包。
+- **信任模型**：宿主在进程内跑第三方 JS。和所有 sidecar 一样，只装你信任的包。具体边界：
+  - 进程只有环境变量白名单（`ADMIN_TOKEN` / `MASTER_KEY` 不传，见主仓 `filterPluginEnv`），监听地址由网关指定且默认 `127.0.0.1`；
+  - 但没有沙箱：包能读写自己的插件目录、能访问网络、能花掉已登录的订阅额度。它不是安全边界，进程边界才是；
+  - 装包只从 `registry.npmjs.org` 取，tarball 必须是 HTTPS 且 host 就是这个域名，单包上限 32 MiB，解包前先列成员（绝对路径、`..`、符号/硬链接一律拒绝）；
+  - `PLUGIN_KEY` 守着 `/v1` 与 `/api`；不设密钥只能绑回环，绑 `0.0.0.0` 会直接拒绝启动。
 - **管理页跑在沙箱 iframe 里**：控制台的 `PluginHost` 用 `sandbox="allow-scripts allow-forms …"`（**没有** `allow-same-origin`），所以页面是 opaque origin，相对路径的 `fetch` 也是跨域——宿主必须回 CORS 头，页面自己要把 URL 上的 `?t=` 带到每个请求里（`api()` 里那两行）。缺任何一条的表现都是“页面能打开，然后每块都写 Failed to fetch”。
 - **网络**：宿主所在进程要能访问厂商；容器里部署时注意它走的是容器网络。
 
@@ -116,4 +122,4 @@ export const MyPlugin = async (input) => ({
 node --test test/host.test.mjs
 ```
 
-6 个用例 + 两个契约：manifest、登录后经插件 `fetch` 转发、流式透传、未知 provider 前缀拒绝、手填模型放行、`X-Plugin-Key` 与 `Authorization: Bearer <key>` 两种凭据、以及「网关把 `host:port` 整个塞进 `META_GATEWAY_PLUGIN_ADDR` 时仍能监听」。用的是本地夹具包，不需要联网。
+11 个用例，都跑在本地夹具包上、不需要联网：manifest、登录后经插件 `fetch` 转发、流式透传、未知 provider 前缀拒绝、手填模型放行、`X-Plugin-Key` 与 `Authorization: Bearer <key>` 两种凭据、`/v1` 不带密钥 401、无密钥绑 `0.0.0.0` 被拒、`META_GATEWAY_PLUGIN_ADDR` 里带端口时仍能监听、以及沙箱 iframe 需要的 CORS 与预检。

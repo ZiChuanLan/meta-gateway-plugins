@@ -14,6 +14,10 @@ COPY public ./public
 # Installing a provider package needs `tar` for the npm tarball and CA roots for
 # the registry; node:22-alpine has both, npm is only a fallback for packages that
 # declare dependencies.
+#
+# Pass META_GATEWAY_PLUGIN_KEY too: binding 0.0.0.0 without a key is refused, and
+# with a key it is the credential the channel (base_url = {this}/v1) presents.
+#   docker run -d -p 9300:9300 -v och:/data -e META_GATEWAY_PLUGIN_KEY=... opencode-host
 ENV META_GATEWAY_PLUGIN_PORT=9300 \
     META_GATEWAY_PLUGIN_ADDR=0.0.0.0 \
     META_GATEWAY_PLUGIN_DIR=/data \
