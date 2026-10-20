@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>订阅账号宿主</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0d10;
+        --card: #14181d;
+        --line: #262c33;
+        --text: #e6ebf1;
+        --muted: #8d99a6;
+        --accent: #4f8cff;
+        --ok: #2f9e6b;
+        --bad: #d9534f;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f6f7f9;
+          --card: #fff;
+          --line: #e2e6eb;
+          --text: #1b2027;
+          --muted: #66707a;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 20px;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      p.sub { margin: 0 0 18px; color: var(--muted); font-size: 13px; }
+      section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+      h2 { font-size: 14px; margin: 0 0 12px; }
+      .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      input[type="text"] {
+        flex: 1 1 240px;
+        min-width: 160px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      button {
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid var(--line);
+        background: var(--bg);
+        color: var(--text);
+        cursor: pointer;
+        font-size: 13px;
+      }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      ul { list-style: none; margin: 0; padding: 0; }
+      li.provider { border-top: 1px solid var(--line); padding: 12px 0; }
+      li.provider:first-child { border-top: 0; padding-top: 0; }
+      .name { font-weight: 600; }
+      .muted { color: var(--muted); }
+      .tag { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; margin-left: 6px; }
+      .tag.on { background: rgba(47, 158, 107, 0.16); color: var(--ok); }
+      .tag.off { background: rgba(217, 83, 79, 0.14); color: var(--bad); }
+      .msg { margin-top: 8px; font-size: 12px; color: var(--muted); white-space: pre-wrap; word-break: break-all; }
+      .msg.err { color: var(--bad); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>订阅账号宿主</h1>
+    <p class="sub">
+      运行其他作者的 OpenCode provider 插件包（npm）：装包、登录，任何一个订阅账号都会成为网关的一条上游渠道。模型名写作
+      <code>&lt;provider&gt;/&lt;model&gt;</code>。
+    </p>
+
+    <section>
+      <h2>安装插件包</h2>
+      <div class="row">
+        <input id="spec" type="text" placeholder="@magpie-community/opencode-zen-free-auth" spellcheck="false" />
+        <button class="primary" id="install">安装</button>
+      </div>
+      <div class="msg" id="installMsg"></div>
+    </section>
+
+    <section>
+      <h2>已安装的包</h2>
+      <ul id="packages"><li class="muted">加载中…</li></ul>
+    </section>
+
+    <section>
+      <h2>登录</h2>
+      <ul id="providers"><li class="muted">加载中…</li></ul>
+    </section>
+
+    <script>
+      const el = (id) => document.getElementById(id)
+      const esc = (v) => String(v ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c])
+
+      async function api(path, init) {
+        // Two things this page cannot assume: it is served from the gateway's
+        // plugin proxy (so paths are relative to that directory, not the site
+        // root) and its own URL is the only place the ?t= token lives — a
+        // fetch does not inherit the query string.
+        const target = new URL(path, location.href)
+        const token = new URLSearchParams(location.search).get("t")
+        if (token && !target.searchParams.has("t")) target.searchParams.set("t", token)
+        const response = await fetch(target.toString(), {
+          ...init,
+          headers: { "content-type": "application/json", ...(init?.headers || {}) },
+        })
+        const text = await response.text()
+        let body = null
+        try {
+          body = text ? JSON.parse(text) : null
+        } catch {
+          body = { raw: text }
+        }
+        if (!response.ok) throw new Error(body?.error?.message || body?.error || response.statusText)
+        return body
+      }
+
+      function say(target, message, isError) {
+        const node = el(target)
+        node.textContent = message || ""
+        node.className = message ? `msg${isError ? " err" : ""}` : "msg"
+      }
+
+      async function refresh() {
+        try {
+          const state = await api("api/state")
+          const packages = el("packages")
+          packages.innerHTML = state.packages.length
+            ? state.packages
+                .map(
+                  (p) => `<li class="provider">
+                    <div class="row">
+                      <span class="name">${esc(p.name)}</span>
+                      <span class="muted">${esc(p.spec)} · v${esc(p.version || "?")}</span>
+                      <span class="tag ${p.enabled ? "on" : "off"}">${p.enabled ? "已启用" : "已停用"}</span>
+                      <button data-enable="${esc(p.spec)}" data-on="${p.enabled ? "0" : "1"}">${p.enabled ? "停用" : "启用"}</button>
+                      <button data-remove="${esc(p.spec)}">移除</button>
+                    </div>
+                  </li>`,
+                )
+                .join("")
+            : `<li class="muted">还没有安装任何插件包。</li>`
+
+          const providers = el("providers")
+          providers.innerHTML = state.providers.length
+            ? state.providers
+                .map((p) => {
+                  const method = p.methods.find((m) => m.type === "api")
+                  const oauth = p.methods.find((m) => m.type === "oauth")
+                  return `<li class="provider">
+                    <div class="row">
+                      <span class="name">${esc(p.id)}</span>
+                      <span class="tag ${p.signedIn ? "on" : "off"}">${p.signedIn ? "已登录（" + esc(p.method) + "）" : "未登录"}</span>
+                      ${p.signedIn ? `<button data-signout="${esc(p.id)}">退出</button>` : ""}
+                    </div>
+                    ${
+                      p.signedIn
+                        ? ""
+                        : `<div class="row" style="margin-top:8px">
+                            ${method ? `<input id="key-${esc(p.id)}" type="text" placeholder="${esc(method.placeholder || "粘贴密钥")}" spellcheck="false" />` : ""}
+                            ${method ? `<button class="primary" data-signin="${esc(p.id)}">${esc(method.label || "登录")}</button>` : ""}
+                            ${oauth ? `<button data-oauth="${esc(p.id)}">${esc(oauth.label || "浏览器登录")}</button>` : ""}
+                          </div>`
+                    }
+                    <div class="msg" id="msg-${esc(p.id)}"></div>
+                  </li>`
+                })
+                .join("")
+            : `<li class="muted">还没有可用的 provider：先安装一个插件包。</li>`
+        } catch (err) {
+          el("packages").innerHTML = `<li class="msg err">${esc(err.message)}</li>`
+        }
+      }
+
+      document.addEventListener("click", async (event) => {
+        const target = event.target.closest("button")
+        if (!target) return
+        target.disabled = true
+        try {
+          if (target.dataset.enable) {
+            await api("api/enable", { method: "POST", body: JSON.stringify({ spec: target.dataset.enable, enabled: target.dataset.on === "1" }) })
+          } else if (target.dataset.remove) {
+            await api("api/packages", { method: "DELETE", body: JSON.stringify({ spec: target.dataset.remove }) })
+          } else if (target.dataset.signin) {
+            const id = target.dataset.signin
+            const input = document.getElementById(`key-${id}`)
+            await api("api/signin/api", { method: "POST", body: JSON.stringify({ provider: id, key: input?.value || "" }) })
+            say(`msg-${id}`, "登录成功")
+          } else if (target.dataset.oauth) {
+            const id = target.dataset.oauth
+            const started = await api("api/signin/oauth", { method: "POST", body: JSON.stringify({ provider: id }) })
+            say(`msg-${id}`, `${started.instructions || "在浏览器里完成登录："}\n${started.url}`)
+            window.open(started.url, "_blank", "noopener")
+            const code = window.prompt("把浏览器里得到的授权码粘贴到这里")
+            if (code) {
+              await api("api/signin/oauth/code", { method: "POST", body: JSON.stringify({ provider: id, code }) })
+              say(`msg-${id}`, "登录成功")
+            }
+          } else if (target.dataset.signout) {
+            await api("api/signin", { method: "DELETE", body: JSON.stringify({ provider: target.dataset.signout }) })
+          }
+        } catch (err) {
+          say(`msg-${target.dataset.signin || target.dataset.oauth || ""}`, err.message, true)
+        } finally {
+          target.disabled = false
+          refresh()
+        }
+      })
+
+      el("install").addEventListener("click", async () => {
+        const button = el("install")
+        button.disabled = true
+        say("installMsg", "安装中（npm）…")
+        try {
+          const result = await api("api/packages", { method: "POST", body: JSON.stringify({ spec: el("spec").value }) })
+          say("installMsg", `已安装 ${result.installed?.spec || ""}${result.errors?.length ? `；失败的包：${result.errors.map((e) => e.spec).join(", ")}` : ""}`)
+          el("spec").value = ""
+        } catch (err) {
+          say("installMsg", err.message, true)
+        } finally {
+          button.disabled = false
+          refresh()
+        }
+      })
+
+      refresh()
+    </script>
+  </body>
+</html>

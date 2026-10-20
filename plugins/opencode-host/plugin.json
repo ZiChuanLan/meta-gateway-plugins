@@ -1,0 +1,13 @@
+{
+  "id": "opencode-host",
+  "version": "0.2.3",
+  "name": "订阅账号宿主",
+  "description": "在网关里直接运行其他作者的 OpenCode 订阅插件（npm 包）：装包、登录，即可把订阅当上游渠道使用。",
+  "capabilities": ["admin_page", "channel"],
+  "permissions": ["admin_api:opencode-host"],
+  "page_path": "/",
+  "health_path": "/healthz",
+  "channel_path": "/v1",
+  "entrypoint": "opencode-host",
+  "run_args": []
+}

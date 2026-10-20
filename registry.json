@@ -7,7 +7,11 @@
       "description": "元网关托管进程插件参考实现：由 meta-gateway 下载安装包并在容器内拉起子进程，展示 plugin.json/healthz/页面/API 反代协议。",
       "author": "meta-gateway",
       "version": "1.0.0",
-      "tags": ["demo", "示例", "托管进程"],
+      "tags": [
+        "demo",
+        "示例",
+        "托管进程"
+      ],
       "install": {
         "type": "direct",
         "artifacts": [
@@ -15,7 +19,7 @@
             "goos": "linux",
             "goarch": "amd64",
             "url": "https://raw.githubusercontent.com/ZiChuanLan/meta-gateway-plugins/main/dist/demo-plugin_1.0.0_linux_amd64.zip",
-                        "sha256": "01c0affe7998801f7696178843de6ee3af0111172dc3f6a6c0272c3d7f423ecb",
+            "sha256": "01c0affe7998801f7696178843de6ee3af0111172dc3f6a6c0272c3d7f423ecb",
             "size": 4816511
           }
         ]
@@ -29,7 +33,27 @@
       "homepage": "https://github.com/ZiChuanLan/meta-gateway-plugins",
       "repository": "https://github.com/ZiChuanLan/meta-gateway-plugins",
       "version": "1.1.0",
-      "tags": ["routing", "typesafe", "jev", "托管进程"]
+      "tags": [
+        "routing",
+        "typesafe",
+        "jev",
+        "托管进程"
+      ]
+    },
+    {
+      "id": "opencode-host",
+      "name": "订阅账号宿主",
+      "description": "在网关里直接运行其他作者的 OpenCode 订阅插件（npm 包）：装包、登录，即可把订阅当上游渠道使用。",
+      "author": "ZiChuanLan",
+      "homepage": "https://github.com/ZiChuanLan/meta-gateway-plugins",
+      "repository": "https://github.com/ZiChuanLan/meta-gateway-plugins",
+      "version": "0.2.3",
+      "tags": [
+        "订阅",
+        "opencode",
+        "2api",
+        "托管进程"
+      ]
     }
   ]
 }

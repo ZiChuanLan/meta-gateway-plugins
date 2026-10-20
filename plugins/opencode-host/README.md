@@ -1,0 +1,117 @@
+# opencode-host（显示名：订阅账号宿主）
+
+在 meta-gateway 里**直接运行其他作者的 OpenCode 订阅插件**，把它们的订阅变成网关的一条上游渠道。
+
+它不移植、不改写、不重新实现任何厂商：那些包（`@magpie-community/*`，以及任何按 OpenCode provider plugin 接口写的包）由作者维护，这里只负责装、登录、转发。
+
+## 它做什么
+
+| 环节 | 谁做 |
+| :--- | :--- |
+| 订阅的协议、鉴权刷新、模型清单、厂商特定的请求塑形 | **插件包作者** |
+| 安装（npm）、登录、账号存储、模型路由、把 OpenAI 请求交给插件 | 本宿主 |
+| 路由、故障转移、计费、日志、渠道管理 | meta-gateway |
+
+所以「支持一家新厂商」= 在控制台里装一个包 + 登录一次，**不需要改本仓库，也不需要编译**。
+
+## 形态
+
+一个 meta-gateway sidecar：任何 HTTP 服务，声明 `channel_path: "/v1"`，网关就会把它当上游渠道用。
+
+| 端点 | 作用 |
+| :--- | :--- |
+| `/plugin.json` | 网关注册时读的 manifest |
+| `/healthz` | 健康检查 |
+| `/v1/models` | 聚合所有已登录 provider 的模型，名字是 `<provider>/<model>` |
+| `/v1/chat/completions` | 转发；流式原样透传 |
+| `/api/*` | 管理接口（安装、登录、启停），需要 `X-Plugin-Key` |
+| `/` | 管理页，控制台 iframe 内嵌 |
+
+## 跑起来
+
+**推荐：从插件市场装（一键，不需要 Node）。**
+
+控制台 **拓展 → 插件市场 → OpenCode Provider Host → 安装**。网关会自己下载对应平台的安装包（单个自带运行时的可执行文件）、校验 sha256、解包、拉起进程并等 `/healthz`；装完点插件卡片就是它自己的管理页。
+
+一台能跑托管包的机器只需要三样东西：
+
+| 依赖 | 为什么 |
+| :--- | :--- |
+| `tar` | 安装 npm 包时解 `.tgz`（busybox 的够用；Windows 自带 `tar.exe` 也行） |
+| CA 证书 | 访问 `registry.npmjs.org` 要用 HTTPS |
+| `libstdc++`（仅 musl/Alpine） | Linux 产物是 Bun 的 musl 构建；官方 Alpine 镜像需要这一个包 |
+
+> **不需要 node，也不需要 npm。** 装 npm 包走的不是 npm，而是「读 registry 元数据 → 下载 tarball → `tar` 解开」——这些包按仓库约定不带依赖，所以没有要解析的依赖树；真带了依赖的包会被明确拒绝并提示用 npm 装。
+
+开发时也可以直接跑源码（需要 Node 24+）：
+
+```bash
+node src/host.mjs          # DATA_DIR 由 META_GATEWAY_PLUGIN_DIR 指定，端口由 META_GATEWAY_PLUGIN_PORT 指定
+```
+
+托管运行时网关会注入 `META_GATEWAY_PLUGIN_{ID,DIR,ADDR,PORT,KEY}`；手动起的话自己设这几个环境变量：
+
+```bash
+META_GATEWAY_PLUGIN_DIR=$PWD/data META_GATEWAY_PLUGIN_PORT=9300 META_GATEWAY_PLUGIN_ADDR=127.0.0.1 node src/host.mjs
+```
+
+然后 **拓展 → 注册 sidecar** 填 `http://127.0.0.1:9300`，再去「创建渠道」（地址与密钥会自动填成 `http://127.0.0.1:9300/v1`）。
+
+数据都落在 `META_GATEWAY_PLUGIN_DIR`：`host.json`（装了哪些包）与 `auth.json`（登录凭据，0600）。
+
+## 发版
+
+```powershell
+./build-release.ps1 -Version 0.2.0     # 四个平台的 zip 落在仓库 dist/，并打印 registry.json 条目
+```
+
+产物是 Bun 编译的单文件（45 MB 左右），运行时不依赖 Node。`plugin.json` 里 `entrypoint` 会按平台改成带不带 `.exe`——装错一次就会得到 `plugin_manifest_entrypoint_missing`。
+
+## 用
+
+1. 管理页里填 npm 包名 → **安装**（例如 `@magpie-community/opencode-zen-free-auth`、`@magpie-community/opencode-zcode-auth`）
+2. 该包声明的 provider 出现在**登录**区 → 点登录（`api` 类型填/确认密钥，`oauth` 类型走浏览器流程）
+3. 登录后 `/v1/models` 就有它的模型，名如 `opencode-zen-free/cat-jam-free`
+4. 在网关里给这些模型名建路由即可
+
+> **模型名要带 provider 前缀。** 一个宿主可以同时跑很多家；前缀是唯一的「这条请求给谁」。只有一个 provider 时，不带前缀的名字会直接交给它。
+
+## 契约（宿主实现了什么）
+
+插件包按 OpenCode 的 provider plugin 接口写：
+
+```js
+export const MyPlugin = async (input) => ({
+  config(cfg) {},                       // 可选：注册 provider 配置
+  auth: {
+    provider: "my-provider",
+    methods: [{ type: "api", label, placeholder, authorize() }, { type: "oauth", authorize() }],
+    async loader(getAuth) {             // 每次请求都调用，作者可以在这里刷新
+      return { baseURL, apiKey, fetch(input, init) -> Response }
+    },
+  },
+  provider: { id, async models(conf, { auth }) { return { "model-id": {...} } } },
+})
+```
+
+- `loader` 返回的 `{baseURL, apiKey}` 决定请求打到哪里；它没有自带 `fetch` 时，宿主用 `Authorization: Bearer <apiKey>` 直发。
+- `authorize()` 返回 `{type:"success", key}` 的 `api` 登录会被原样采信（Zen 的 `public` 就是这样一次点击完成）。
+- `oauth` 的 `authorize()` 返回 `{url, instructions, callback(code)}`；宿主把 URL 交给操作员，拿回来的 code 交给 `callback`。
+- 签名只经 `getAuth()` 读，宿主不缓存：作者若在 `fetch` 里换了 token 并 `client.auth.set`，下一次请求就看到。
+
+## 边界（写在这里，免得踩）
+
+- **一个 provider 一个账号。** 同一家多账号还没做，需要时再加（`provider#2` 的形状）。
+- **OAuth 的自动续期没有单独实现**：刷新逻辑在包自己的 `loader`/`fetch` 里，宿主每次请求都会重新调 `loader`。包不刷新就得重新登录。
+- **`$`（Bun shell）不可用**：需要跑命令的包（少数要调厂商 CLI 的）会拿到一个抛错函数。
+- **信任模型**：宿主在进程内跑第三方 JS。和所有 sidecar 一样，只装你信任的包。
+- **管理页跑在沙箱 iframe 里**：控制台的 `PluginHost` 用 `sandbox="allow-scripts allow-forms …"`（**没有** `allow-same-origin`），所以页面是 opaque origin，相对路径的 `fetch` 也是跨域——宿主必须回 CORS 头，页面自己要把 URL 上的 `?t=` 带到每个请求里（`api()` 里那两行）。缺任何一条的表现都是“页面能打开，然后每块都写 Failed to fetch”。
+- **网络**：宿主所在进程要能访问厂商；容器里部署时注意它走的是容器网络。
+
+## 测试
+
+```bash
+node --test test/host.test.mjs
+```
+
+6 个用例 + 两个契约：manifest、登录后经插件 `fetch` 转发、流式透传、未知 provider 前缀拒绝、手填模型放行、`X-Plugin-Key` 与 `Authorization: Bearer <key>` 两种凭据、以及「网关把 `host:port` 整个塞进 `META_GATEWAY_PLUGIN_ADDR` 时仍能监听」。用的是本地夹具包，不需要联网。

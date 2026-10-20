@@ -62,6 +62,24 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Node plugins keep their own tests too: the provider host is the piece
+      # that has to keep working against other authors' packages, so it is
+      # tested on the ecosystem's own runtime rather than skipped.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test Node plugins
+        run: |
+          set -euo pipefail
+          for file in plugins/*/package.json; do
+            [ -f "$file" ] || continue
+            dir="$(dirname "$file")"
+            echo "::group::node --test $dir"
+            (cd "$dir" && node --test)
+            echo "::endgroup::"
+          done
+
       # Registry entries pin sha256 + size; the gateway only ever verifies the
       # one platform it is installing on, so the rest are checked here.
       - name: Validate registry.json

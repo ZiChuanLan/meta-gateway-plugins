@@ -1,0 +1,16 @@
+{
+  "name": "meta-gateway-opencode-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "meta-gateway sidecar that runs OpenCode provider plugins from npm as upstream channels",
+  "type": "module",
+  "main": "src/host.mjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/host.mjs",
+    "test": "node --test test/"
+  },
+  "license": "MIT"
+}
